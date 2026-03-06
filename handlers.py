@@ -4,108 +4,131 @@ from aiogram import Router, F, types
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from gigachat_client import analyze_text
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from gigachat_client import generate_question, evaluate_answer
 
 logger = logging.getLogger(__name__)
 router = Router()
 
-class AnalysisState(StatesGroup):
-    agency = State()
-    location = State()
-    text = State()
+class StudyState(StatesGroup):
+    subject = State()      # Выбор раздела
+    exam_name = State()    # Название олимпиады/экзамена
+    waiting_answer = State()  # Ожидание ответа пользователя
+
+# Главная клавиатура с разделами
+def get_subject_keyboard():
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📜 Право", callback_data="subject_law")],
+        [InlineKeyboardButton(text="💰 Экономика", callback_data="subject_economy")],
+        [InlineKeyboardButton(text="🎭 Культура", callback_data="subject_culture")],
+    ])
+    return keyboard
 
 @router.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
     await state.clear()
     logger.info(f"CMD_START: user_id={message.from_user.id}")
     await message.answer(
-        "👋 Привет! Я бот для анализа ответов государственных органов РФ.\n\n"
-        "Используй /analysis, чтобы начать новый сеанс анализа.\n"
-        "Используй /cancel, чтобы отменить текущий сеанс."
+        "👋 Привет! Я бот для подготовки к олимпиадам и экзаменам по обществознанию.\n\n"
+        "Я помогу тебе:\n"
+        "• Практиковаться в заданиях с развёрнутым ответом\n"
+        "• Получать оценку от 0 до 100 баллов\n"
+        "• Анализировать ошибки и улучшать ответы\n\n"
+        "Нажми /study чтобы начать тренировку!"
     )
 
-@router.message(Command("analysis"))
-async def cmd_analysis(message: types.Message, state: FSMContext):
+@router.message(Command("study"))
+async def cmd_study(message: types.Message, state: FSMContext):
     await state.clear()
-    await state.set_state(AnalysisState.agency)
-    logger.info(f"CMD_ANALYSIS: State set to AGENCY for user_id={message.from_user.id}")
+    await state.set_state(StudyState.subject)
+    logger.info(f"CMD_STUDY: user_id={message.from_user.id}")
     await message.answer(
-        "📋 **Шаг 1/3**\n\n"
-        "Отправь **название государственного органа**, который прислал ответ.\n\n"
-        "_(например: ФНС России, МВД, Пенсионный фонд)_ "
+        "📚 **Выбери раздел обществознания:**",
+        reply_markup=get_subject_keyboard()
     )
 
-@router.message(AnalysisState.agency, F.text)
-async def process_agency(message: types.Message, state: FSMContext):
-    await state.update_data(agency=message.text)
-    await state.set_state(AnalysisState.location)
-    logger.info(f"STATE_AGENCY: Received '{message.text}'")
-    await message.answer(
-        "📍 **Шаг 2/3**\n\n"
-        "Отправь **регион и город**.\n\n"
-        "_(например: Москва, Санкт-Петербург, Краснодарский край)_ "
+@router.callback_query(F.data.startswith("subject_"))
+async def process_subject(callback: types.CallbackQuery, state: FSMContext):
+    subject_map = {
+        "subject_law": "Право",
+        "subject_economy": "Экономика",
+        "subject_culture": "Культура"
+    }
+    subject = subject_map.get(callback.data, "Неизвестно")
+    await state.update_data(subject=subject)
+    await state.set_state(StudyState.exam_name)
+    logger.info(f"SUBJECT_SELECTED: {subject}")
+    await callback.message.answer(
+        f"✅ Выбран раздел: **{subject}**\n\n"
+        "📝 Теперь напиши название олимпиады или экзамена,\n"
+        "к которому ты готовишься.\n\n"
+        "_(например: Всероссийская олимпиада, ЕГЭ, МГУ олимпиада)_ "
     )
+    await callback.answer()
 
-@router.message(AnalysisState.location, F.text)
-async def process_location(message: types.Message, state: FSMContext):
-    await state.update_data(location=message.text)
-    await state.set_state(AnalysisState.text)
-    logger.info(f"STATE_LOCATION: Received '{message.text}'")
-    await message.answer(
-        "📄 **Шаг 3/3**\n\n"
-        "Отправь **полный текст ответа государственного органа** для анализа.\n\n"
-        "⚠️ _Рекомендуется до 3000 символов для быстрого ответа_"
-    )
-
-@router.message(AnalysisState.text, F.text)
-async def process_text(message: types.Message, state: FSMContext):
-    logger.info("=" * 50)
-    logger.info(f"📩 RECEIVED TEXT for analysis")
-    logger.info(f"   User ID: {message.from_user.id}")
-    logger.info(f"   Text length: {len(message.text)}")
-    logger.info("=" * 50)
-    
-    await message.answer(f"✅ Получено {len(message.text)} символов. Начинаю анализ...")
-    waiting_msg = await message.answer("⏳ Анализирую с помощью GigaChat...")
-    logger.info("✅ Sent 'Analyzing...' message to user")
+@router.message(StudyState.exam_name, F.text)
+async def process_exam_name(message: types.Message, state: FSMContext):
+    exam_name = message.text
+    await state.update_data(exam_name=exam_name)
     
     data = await state.get_data()
-    agency = data.get("agency", "Не указано")
-    location = data.get("location", "Не указано")
-    text = message.text
+    subject = data.get("subject", "Неизвестно")
+    
+    logger.info(f"EXAM_NAME: {exam_name}, SUBJECT: {subject}")
+    
+    waiting_msg = await message.answer("⏳ Генерирую вопрос...")
     
     try:
-        logger.info("🔄 Calling analyze_text()...")
-        result = await analyze_text(text, agency, location)
-        logger.info(f"✅ analyze_text() returned, result length: {len(result)}")
+        question = await generate_question(subject, exam_name)
+        await state.update_data(question=question)
+        await state.set_state(StudyState.waiting_answer)
         
-        if result.startswith("❌") or result.startswith("⏰"):
-            await waiting_msg.edit_text(result)
-            logger.info("⚠️ Sent error message to user")
-        else:
-            final_text = (
-                f"🏛️ **Орган:** {agency}\n"
-                f"📍 **Регион:** {location}\n\n"
-                f"🤖 **Результат анализа:**\n\n{result}"
-            )
-            await waiting_msg.edit_text(final_text)
-            logger.info("✅ Sent final result to user")
+        await waiting_msg.edit_text(
+            f"📋 **Твой вопрос:**\n\n{question}\n\n"
+            "✍️ Напиши развёрнутый ответ с аргументацией.\n"
+            "Оценивай ситуацию с точки зрения выбранного раздела.\n\n"
+            "⏰ Не торопись, качество важнее скорости!"
+        )
+        logger.info("Question generated and sent")
         
     except Exception as e:
-        logger.error(f"❌ UNEXPECTED ERROR: {e}", exc_info=True)
-        await waiting_msg.edit_text(f"❌ Неожиданная ошибка: {e}")
+        logger.error(f"Error generating question: {e}")
+        await waiting_msg.edit_text(f"❌ Ошибка при генерации вопроса: {e}")
+
+@router.message(StudyState.waiting_answer, F.text)
+async def process_answer(message: types.Message, state: FSMContext):
+    user_answer = message.text
+    logger.info(f"ANSWER_RECEIVED: {len(user_answer)} chars from user_id={message.from_user.id}")
+    
+    await message.answer(f"✅ Получено {len(user_answer)} символов. Оцениваю ответ...")
+    waiting_msg = await message.answer("⏳ Анализирую твой ответ...")
+    
+    data = await state.get_data()
+    subject = data.get("subject", "Неизвестно")
+    exam_name = data.get("exam_name", "Неизвестно")
+    question = data.get("question", "")
+    
+    try:
+        evaluation = await evaluate_answer(question, user_answer, subject, exam_name)
+        
+        final_text = (
+            f"📊 **Результаты оценки**\n\n"
+            f"{evaluation}\n\n"
+            "💡 Хочешь ещё один вопрос? Нажми /study"
+        )
+        
+        await waiting_msg.edit_text(final_text)
+        logger.info("Evaluation sent to user")
+        
+    except Exception as e:
+        logger.error(f"Error evaluating answer: {e}")
+        await waiting_msg.edit_text(f"❌ Ошибка при оценке: {e}")
     finally:
         await state.clear()
-        logger.info("🧹 State cleared")
-        logger.info("=" * 50)
+        logger.info("State cleared")
 
-# Ловушка для отладки — если сообщение не обработано
-@router.message(F.text)
-async def catch_all_text(message: types.Message, state: FSMContext):
-    current_state = await state.get_state()
-    logger.warning(f"CATCH_ALL: Text not handled! Current State: {current_state}")
-
-
-
-
-
+@router.message(Command("cancel"))
+async def cmd_cancel(message: types.Message, state: FSMContext):
+    await state.clear()
+    logger.info(f"CMD_CANCEL: user_id={message.from_user.id}")
+    await message.answer("❌ Тренировка отменена. Используй /study, чтобы начать заново.")

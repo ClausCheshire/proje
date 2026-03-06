@@ -56,31 +56,40 @@ async def process_location(message: types.Message, state: FSMContext):
 # --- Шаг 3: Получаем текст и запускаем анализ ---
 @router.message(AnalysisState.text)
 async def process_text(message: types.Message, state: FSMContext):
-    waiting_msg = await message.answer("⏳ Analyzing text with GigaChat...")
+    logger.info(f"STATE_TEXT: Starting analysis for user_id={message.from_user.id}")
     
-    # Получаем все данные из состояния
+    await message.answer(f"✅ Received {len(message.text)} characters. Starting analysis...")
+    waiting_msg = await message.answer("⏳ Analyzing with GigaChat...")
+    logger.info("Sent 'Analyzing...' message")
+    
     data = await state.get_data()
     agency = data.get("agency", "Unknown")
     location = data.get("location", "Unknown")
     text = message.text
     
     try:
-        # Передаем все данные в функцию анализа
+        logger.info("Calling analyze_text()...")
         result = await analyze_text(text, agency, location)
-        await waiting_msg.edit_text(
-            f"🏛️ **Agency:** {agency}\n"
-            f"📍 **Location:** {location}\n\n"
-            f"🤖 **Analysis Result:**\n\n{result}"
-        )
+        logger.info(f"analyze_text() returned, result length: {len(result)}")
+        
+        # Если результат начинается с ❌ или ⏰ — это ошибка, покажем её
+        if result.startswith("❌") or result.startswith("⏰"):
+            await waiting_msg.edit_text(result)
+        else:
+            final_text = (
+                f"🏛️ **Agency:** {agency}\n"
+                f"📍 **Location:** {location}\n\n"
+                f"🤖 **Analysis Result:**\n\n{result}"
+            )
+            await waiting_msg.edit_text(final_text)
+        logger.info("Final result sent to user")
+        
     except Exception as e:
-        await waiting_msg.edit_text(f"❌ Error occurred: {e}")
+        logger.error(f"UNEXPECTED ERROR: {e}", exc_info=True)
+        await waiting_msg.edit_text(f"❌ Unexpected error: {e}")
     finally:
-        # Очищаем состояние после завершения
         await state.clear()
+        logger.info("State cleared")
 
-# --- Команда отмены ---
-@router.message(Command("cancel"))
-async def cmd_cancel(message: types.Message, state: FSMContext):
-    await state.clear()
-    await message.answer("❌ Analysis session cancelled. Use /analysis to start again.")
+
 

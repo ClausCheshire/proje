@@ -32,7 +32,7 @@ async def cmd_start(message: types.Message, state: FSMContext):
         "👋 Привет! Я бот для подготовки к олимпиадам и экзаменам по обществознанию.\n\n"
         "Я помогу тебе:\n"
         "• Практиковаться в заданиях с развёрнутым ответом\n"
-        "• Получать оценку от 0 до 100 баллов\n"
+        "• Получать оценку от 1 до 5\n"
         "• Анализировать ошибки и улучшать ответы\n\n"
         "Нажми /study чтобы начать тренировку!"
     )
@@ -132,3 +132,4 @@ async def cmd_cancel(message: types.Message, state: FSMContext):
     await state.clear()
     logger.info(f"CMD_CANCEL: user_id={message.from_user.id}")
     await message.answer("❌ Тренировка отменена. Используй /study, чтобы начать заново.")
+

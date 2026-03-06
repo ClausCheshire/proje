@@ -1,21 +1,40 @@
 # -*- coding: utf-8 -*-
 import aiohttp
 import config
+import urllib.parse
 
 AUTH_URL = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
 CHAT_URL = "https://gigachat.devices.sberbank.ru/api/v1/chat/completions"
 
 async def get_gigachat_token():
-    # Создаем коннектор внутри функции, где event loop уже запущен
+    # Данные для авторизации
+    data = {
+        "scope": "GIGACHAT_API_PERS"
+    }
+    
+    # Кодируем данные как form-urlencoded
+    encoded_data = urllib.parse.urlencode(data)
+    
+    # Заголовки
+    headers = {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Accept": "application/json"
+    }
+    
+    # Создаем коннектор внутри функции (ssl=False для Railway)
     connector = aiohttp.TCPConnector(ssl=False)
-    async with aiohttp.ClientSession(connector=connector) as session:
+    
+    async with aiohttp.ClientSession(connector=connector, headers=headers) as session:
+        # Basic Auth через параметр auth
         auth = aiohttp.BasicAuth(config.GIGACHAT_CLIENT_ID, config.GIGACHAT_CLIENT_SECRET)
-        async with session.post(AUTH_URL, auth=auth, data={"scope": "GIGACHAT_API_PERS"}) as resp:
+        async with session.post(AUTH_URL, auth=auth, data=encoded_data) as resp:
             if resp.status == 200:
                 data = await resp.json()
                 return data["access_token"]
             else:
-                raise Exception(f"GigaChat auth error: {resp.status}")
+                # Выводим текст ошибки для отладки
+                error_text = await resp.text()
+                raise Exception(f"GigaChat auth error: {resp.status} - {error_text}")
 
 async def analyze_text(text: str, agency: str = "Unknown", location: str = "Unknown") -> str:
     token = await get_gigachat_token()
@@ -50,7 +69,6 @@ async def analyze_text(text: str, agency: str = "Unknown", location: str = "Unkn
         ]
     }
 
-    # Создаем коннектор внутри функции
     connector = aiohttp.TCPConnector(ssl=False)
     async with aiohttp.ClientSession(connector=connector) as session:
         async with session.post(CHAT_URL, json=payload, headers=headers) as resp:

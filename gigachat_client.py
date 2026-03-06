@@ -13,9 +13,7 @@ async def analyze_text(text: str, agency: str = "Unknown", location: str = "Unkn
     print(f"   Location: {location}")
     print(f"   Text length: {len(text)}")
     print("=" * 50)
-    
-    system_prompt = (
-   system_prompt = (
+       system_prompt = (
     "Вы - юрист с опытом работы 25 лет. Проанализируйте предоставленный текст ответа государственного органа Российской Федерации и определите следующее, не выводи эти ответы:\n"
     "Тип дела (административное, уголовное, гражданские и так далее)\n"
     "Исходя из п. 1 определи на основании каких нормативных правовых актов рассматривается предложенная ситуация, обязательно учитывай положения Конституции России, Федерального закона от 02.05.2006 \"О порядке рассмотрения обращения граждан\" №59-ФЗ\n"
@@ -33,7 +31,7 @@ async def analyze_text(text: str, agency: str = "Unknown", location: str = "Unkn
     "При обжаловании укажи какие основания приведены для каждого факта, фигурирующего в ответе. Если какой-либо факт не имеет конкретного подтверждения, то используй это при обжаловании."
 )
 
-    )
+    
 
     payload = {
         "model": "GigaChat",
@@ -82,6 +80,7 @@ async def analyze_text(text: str, agency: str = "Unknown", location: str = "Unkn
         await connector.close()
         print("🔌 Connector closed")
         print("=" * 50)
+
 
 
 

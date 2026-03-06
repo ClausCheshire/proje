@@ -18,8 +18,15 @@ async def cmd_analysis(message: types.Message):
         "Please send the text of the government agency response that you want to analyze."
     )
 
-@router.message(~Command())
+# ИСПРАВЛЕНИЕ ЗДЕСЬ:
+# Используем F.text вместо ~Command(), чтобы избежать ошибки инициализации
+@router.message(F.text)
 async def handle_text(message: types.Message):
+    # Игнорируем команды, если они попали сюда (на всякий случай)
+    if message.text.startswith('/'):
+        return
+
+    # Обрабатываем только достаточно длинные сообщения
     if len(message.text) > 50:
         waiting_msg = await message.answer("Analyzing text with GigaChat...")
         try:
@@ -27,3 +34,6 @@ async def handle_text(message: types.Message):
             await waiting_msg.edit_text(f"Analysis result:\n\n{result}")
         except Exception as e:
             await waiting_msg.edit_text(f"Error occurred: {e}")
+    else:
+        # Если текст слишком короткий, можно не отвечать или попросить повторить
+        pass

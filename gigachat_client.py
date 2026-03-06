@@ -2,41 +2,48 @@
 import aiohttp
 import config
 import json
+import base64
 from urllib.parse import urlencode
 
 AUTH_URL = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
 CHAT_URL = "https://gigachat.devices.sberbank.ru/api/v1/chat/completions"
 
 async def get_gigachat_token():
-    # 1. Пробуем основной scope, если не выйдет — в логе будет подсказка
     scope = "GIGACHAT_API_PERS"
     
-    # 2. Кодируем данные строго как form-urlencoded
-    data = urlencode({"scope": scope})
+    # 1. Формируем Basic Auth вручную (client_id:client_secret)
+    credentials = f"{config.GIGACHAT_CLIENT_ID}:{config.GIGACHAT_CLIENT_SECRET}"
+    encoded_credentials = base64.b64encode(credentials.encode('utf-8')).decode('utf-8')
     
-    # 3. Заголовки для OAuth
+    # 2. Заголовки
     headers = {
         "Content-Type": "application/x-www-form-urlencoded",
-        "Accept": "application/json"
+        "Accept": "application/json",
+        "Authorization": f"Basic {encoded_credentials}"
     }
+    
+    # 3. Тело запроса (строка, не dict!)
+    body = f"scope={scope}"
     
     connector = aiohttp.TCPConnector(ssl=False)
     
     async with aiohttp.ClientSession(connector=connector) as session:
-        # 4. Basic Auth
-        auth = aiohttp.BasicAuth(config.GIGACHAT_CLIENT_ID, config.GIGACHAT_CLIENT_SECRET)
-        
-        async with session.post(AUTH_URL, auth=auth, data=data, headers=headers) as resp:
+        # Отправляем как строку, чтобы точно ушел form-urlencoded
+        async with session.post(AUTH_URL, data=body, headers=headers) as resp:
             response_text = await resp.text()
+            
+            # Логирование для отладки (скрываем секрет)
+            print(f"🔍 Auth Request: POST {AUTH_URL}")
+            print(f"🔑 Client ID Start: {config.GIGACHAT_CLIENT_ID[:5]}...")
+            print(f"📡 Response Status: {resp.status}")
+            print(f"📄 Response Body: {response_text}")
             
             if resp.status == 200:
                 json_data = await resp.json()
+                print("✅ Token received successfully")
                 return json_data["access_token"]
             else:
-                # 5. Подробный лог ошибки для Railway
                 print(f"❌ GigaChat Auth Failed: {resp.status}")
-                print(f"📄 Response Body: {response_text}")
-                print(f"🔑 Client ID: {config.GIGACHAT_CLIENT_ID[:5]}...") # Первые 5 символов для проверки
                 raise Exception(f"GigaChat auth error: {resp.status} - {response_text}")
 
 async def analyze_text(text: str, agency: str = "Unknown", location: str = "Unknown") -> str:
@@ -51,7 +58,7 @@ async def analyze_text(text: str, agency: str = "Unknown", location: str = "Unkn
     )
 
     payload = {
-        "model": "GigaChat", # Попробуем базовую модель для стабильности
+        "model": "GigaChat",
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": f"Agency: {agency}\nRegion: {location}\n\nText:\n{text}"}
@@ -75,3 +82,4 @@ async def analyze_text(text: str, agency: str = "Unknown", location: str = "Unkn
             else:
                 error_text = await resp.text()
                 return f"Analysis error: {resp.status} - {error_text}"
+

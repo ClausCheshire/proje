@@ -1,16 +1,13 @@
 # -*- coding: utf-8 -*-
 import aiohttp
 import config
-import ssl
 
 AUTH_URL = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
 CHAT_URL = "https://gigachat.devices.sberbank.ru/api/v1/chat/completions"
 
-# Создаем коннектор с отключенной проверкой SSL
-# Это необходимо для работы API Сбера в среде Railway/Docker
-connector = aiohttp.TCPConnector(ssl=False)
-
 async def get_gigachat_token():
+    # Создаем коннектор внутри функции, где event loop уже запущен
+    connector = aiohttp.TCPConnector(ssl=False)
     async with aiohttp.ClientSession(connector=connector) as session:
         auth = aiohttp.BasicAuth(config.GIGACHAT_CLIENT_ID, config.GIGACHAT_CLIENT_SECRET)
         async with session.post(AUTH_URL, auth=auth, data={"scope": "GIGACHAT_API_PERS"}) as resp:
@@ -53,6 +50,8 @@ async def analyze_text(text: str, agency: str = "Unknown", location: str = "Unkn
         ]
     }
 
+    # Создаем коннектор внутри функции
+    connector = aiohttp.TCPConnector(ssl=False)
     async with aiohttp.ClientSession(connector=connector) as session:
         async with session.post(CHAT_URL, json=payload, headers=headers) as resp:
             if resp.status == 200:

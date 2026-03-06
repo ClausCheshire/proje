@@ -11,9 +11,8 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 class StudyState(StatesGroup):
-    subject = State()      # Выбор раздела
-    exam_name = State()    # Название олимпиады/экзамена
-    waiting_answer = State()  # Ожидание ответа пользователя
+    subject = State()           # Выбор раздела
+    waiting_answer = State()    # Ожидание ответа пользователя
 
 # Главная клавиатура с разделами
 def get_subject_keyboard():
@@ -32,7 +31,7 @@ async def cmd_start(message: types.Message, state: FSMContext):
         "👋 Привет! Я бот для подготовки к олимпиадам и экзаменам по обществознанию.\n\n"
         "Я помогу тебе:\n"
         "• Практиковаться в заданиях с развёрнутым ответом\n"
-        "• Получать оценку от 1 до 5\n"
+        "• Получать оценку от 1 до 5 баллов\n"
         "• Анализировать ошибки и улучшать ответы\n\n"
         "Нажми /study чтобы начать тренировку!"
     )
@@ -56,52 +55,14 @@ async def process_subject(callback: types.CallbackQuery, state: FSMContext):
     }
     subject = subject_map.get(callback.data, "Неизвестно")
     await state.update_data(subject=subject)
-    await state.set_state(StudyState.exam_name)
+    
     logger.info(f"SUBJECT_SELECTED: {subject}")
-    await callback.message.answer(
-        f"✅ Выбран раздел: **{subject}**\n\n"
-        "📝 Теперь напиши название олимпиады или экзамена,\n"
-        "к которому ты готовишься.\n\n"
-        "_(например: Всероссийская олимпиада, ЕГЭ, МГУ олимпиада)_ "
-    )
-    await callback.answer()
-
-@router.message(StudyState.exam_name, F.text)
-async def process_exam_name(message: types.Message, state: FSMContext):
-    exam_name = message.text.strip()
-    await state.update_data(exam_name=exam_name)
     
-    data = await state.get_data()
-    subject = data.get("subject", "Неизвестно")
-    
-    logger.info(f"EXAM_NAME: {exam_name}, SUBJECT: {subject}")
-    
-    waiting_msg = await message.answer("⏳ Генерирую вопрос...")
+    waiting_msg = await callback.message.answer("⏳ Генерирую вопрос...")
     
     try:
-        question = await generate_question(subject, exam_name)
-        
-        # === ПРОВЕРКА: только на явную ошибку ===
-        if question in ["Не удалось распознать экзамен/соревнование", "⏰ Превышено время ожидания"]:
-            await waiting_msg.edit_text(
-                "❌ Не удалось сгенерировать вопрос.\n\n"
-                "💡 Возможные причины:\n"
-                "• Слишком короткое название экзамена\n"
-                "• Временная проблема с сервисом\n\n"
-                "Попробуй ещё раз или напиши /study чтобы начать заново."
-            )
-            await state.clear()
-            return
-        
-        # === Проверка на ошибку API ===
-        if question.startswith("❌ Ошибка API"):
-            await waiting_msg.edit_text(
-                "❌ Временная проблема с сервисом.\n\n"
-                "Попробуй через минуту или напиши /study чтобы начать заново."
-            )
-            await state.clear()
-            return
-        
+        # Генерируем вопрос БЕЗ указания экзамена
+        question = await generate_question(subject)
         await state.update_data(question=question)
         await state.set_state(StudyState.waiting_answer)
         
@@ -116,6 +77,8 @@ async def process_exam_name(message: types.Message, state: FSMContext):
     except Exception as e:
         logger.error(f"Error generating question: {e}")
         await waiting_msg.edit_text(f"❌ Ошибка при генерации вопроса: {e}")
+    
+    await callback.answer()
 
 @router.message(StudyState.waiting_answer, F.text)
 async def process_answer(message: types.Message, state: FSMContext):
@@ -127,11 +90,11 @@ async def process_answer(message: types.Message, state: FSMContext):
     
     data = await state.get_data()
     subject = data.get("subject", "Неизвестно")
-    exam_name = data.get("exam_name", "Неизвестно")
     question = data.get("question", "")
     
     try:
-        evaluation = await evaluate_answer(question, user_answer, subject, exam_name)
+        # Оцениваем ответ БЕЗ указания экзамена
+        evaluation = await evaluate_answer(question, user_answer, subject)
         
         final_text = (
             f"📊 **Результаты оценки**\n\n"
@@ -154,5 +117,3 @@ async def cmd_cancel(message: types.Message, state: FSMContext):
     await state.clear()
     logger.info(f"CMD_CANCEL: user_id={message.from_user.id}")
     await message.answer("❌ Тренировка отменена. Используй /study, чтобы начать заново.")
-
-

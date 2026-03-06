@@ -114,6 +114,7 @@ async def evaluate_answer(question: str, user_answer: str, subject: str, exam_na
     "5. 🎯 Идеальный ответ: [3-4 предложения с примером]\n"
     "\n"
     "Будь жёстким. Пустые утверждения = 0 баллов."
+    "После оценки напиши оценку по пятибальной шкале по следующей системе: 0 - 20 = 1, 21 - 40 = 2, 41 - 60 = 3, 61 - 80 = 4, 81 - 100 = 5"
     )
     
     payload = {
@@ -158,6 +159,7 @@ async def evaluate_answer(question: str, user_answer: str, subject: str, exam_na
         return f"❌ Ошибка: {type(e).__name__}: {str(e)}"
     finally:
         await connector.close()
+
 
 
 

@@ -68,7 +68,7 @@ async def process_subject(callback: types.CallbackQuery, state: FSMContext):
 
 @router.message(StudyState.exam_name, F.text)
 async def process_exam_name(message: types.Message, state: FSMContext):
-    exam_name = message.text
+    exam_name = message.text.strip()
     await state.update_data(exam_name=exam_name)
     
     data = await state.get_data()
@@ -80,6 +80,28 @@ async def process_exam_name(message: types.Message, state: FSMContext):
     
     try:
         question = await generate_question(subject, exam_name)
+        
+        # === ПРОВЕРКА: только на явную ошибку ===
+        if question in ["Не удалось распознать экзамен/соревнование", "⏰ Превышено время ожидания"]:
+            await waiting_msg.edit_text(
+                "❌ Не удалось сгенерировать вопрос.\n\n"
+                "💡 Возможные причины:\n"
+                "• Слишком короткое название экзамена\n"
+                "• Временная проблема с сервисом\n\n"
+                "Попробуй ещё раз или напиши /study чтобы начать заново."
+            )
+            await state.clear()
+            return
+        
+        # === Проверка на ошибку API ===
+        if question.startswith("❌ Ошибка API"):
+            await waiting_msg.edit_text(
+                "❌ Временная проблема с сервисом.\n\n"
+                "Попробуй через минуту или напиши /study чтобы начать заново."
+            )
+            await state.clear()
+            return
+        
         await state.update_data(question=question)
         await state.set_state(StudyState.waiting_answer)
         
@@ -132,4 +154,5 @@ async def cmd_cancel(message: types.Message, state: FSMContext):
     await state.clear()
     logger.info(f"CMD_CANCEL: user_id={message.from_user.id}")
     await message.answer("❌ Тренировка отменена. Используй /study, чтобы начать заново.")
+
 

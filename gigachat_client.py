@@ -1,70 +1,86 @@
 # -*- coding: utf-8 -*-
-import aiohttp
-import config
-import json
+import logging
+from aiogram import Router, F, types
+from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from gigachat_client import analyze_text
 
-AUTH_URL = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
-CHAT_URL = "https://gigachat.devices.sberbank.ru/api/v1/chat/completions"
+logger = logging.getLogger(__name__)
+router = Router()
 
-async def get_gigachat_token():
-    data = {
-        "scope": "GIGACHAT_API_PERS"
-    }
-    
-    headers = {
-        "Content-Type": "application/x-www-form-urlencoded",
-        "Accept": "application/json"
-    }
-    
-    connector = aiohttp.TCPConnector(ssl=False)
-    
-    async with aiohttp.ClientSession(connector=connector, headers=headers) as session:
-        auth = aiohttp.BasicAuth(config.GIGACHAT_CLIENT_ID, config.GIGACHAT_CLIENT_SECRET)
-        async with session.post(AUTH_URL, auth=auth, data=data) as resp:
-            if resp.status == 200:
-                data = await resp.json()
-                return data["access_token"]
-            else:
-                error_text = await resp.text()
-                raise Exception(f"GigaChat auth error: {resp.status} - {error_text}")
+class AnalysisState(StatesGroup):
+    agency = State()
+    location = State()
+    text = State()
 
-async def analyze_text(text: str, agency: str = "Unknown", location: str = "Unknown") -> str:
-    token = await get_gigachat_token()
-    
-    system_prompt = (
-        "You are a legal assistant specializing in Russian administrative law. "
-        "Analyze the response from a government agency. Consider the agency type and region context. "
-        "1. Summarize the main points of the response. "
-        "2. Identify possible grounds for appeal (deadline violations, formal responses, "
-        "unanswered questions, references to invalid regulations, jurisdiction issues). "
-        "3. If no violations found, state that clearly. "
-        "4. Keep the answer structured, concise, and professional. "
-        "5. IMPORTANT: Add a disclaimer that this is not official legal advice."
+@router.message(Command("start"))
+async def cmd_start(message: types.Message, state: FSMContext):
+    await state.clear()
+    logger.info(f"CMD_START: user_id={message.from_user.id}")
+    await message.answer(
+        "Hello! I am a bot for analyzing responses from government agencies.\n"
+        "Use /analysis to start a new analysis session."
     )
 
-    # Адаптированный payload на основе вашего примера
-    payload = {
-        "model": "GigaChat-2-Max",  # Обновленная модель
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"Agency: {agency}\nRegion: {location}\n\nResponse text:\n{text}"}
-        ],
-        "profanity_check": True  # Параметр из вашего примера
-    }
+@router.message(Command("analysis"))
+async def cmd_analysis(message: types.Message, state: FSMContext):
+    await state.clear()
+    await state.set_state(AnalysisState.agency)
+    logger.info(f"CMD_ANALYSIS: State set to AGENCY for user_id={message.from_user.id}")
+    await message.answer("📋 **Step 1/3**: Send the **name of the government agency**.")
 
-    headers = {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-        'Authorization': f'Bearer {token}'
-    }
+@router.message(AnalysisState.agency, F.text)
+async def process_agency(message: types.Message, state: FSMContext):
+    await state.update_data(agency=message.text)
+    await state.set_state(AnalysisState.location)
+    logger.info(f"STATE_AGENCY: Received '{message.text}'. Switching to LOCATION.")
+    await message.answer("📍 **Step 2/3**: Send the **region and city**.")
 
-    connector = aiohttp.TCPConnector(ssl=False)
+@router.message(AnalysisState.location, F.text)
+async def process_location(message: types.Message, state: FSMContext):
+    await state.update_data(location=message.text)
+    await state.set_state(AnalysisState.text)
+    logger.info(f"STATE_LOCATION: Received '{message.text}'. Switching to TEXT.")
+    await message.answer("📄 **Step 3/3**: Send the **full text of the response**.")
+
+@router.message(AnalysisState.text, F.text)
+async def process_text(message: types.Message, state: FSMContext):
+    logger.info(f"STATE_TEXT: Received {len(message.text)} chars. Starting analysis...")
     
-    async with aiohttp.ClientSession(connector=connector) as session:
-        async with session.post(CHAT_URL, json=payload, headers=headers) as resp:
-            if resp.status == 200:
-                data = await resp.json()
-                return data["choices"][0]["message"]["content"]
-            else:
-                error_text = await resp.text()
-                return f"Analysis service error: {resp.status} - {error_text}"
+    await message.answer(f"✅ Received {len(message.text)} characters. Starting analysis...")
+    waiting_msg = await message.answer("⏳ Analyzing with GigaChat...")
+    
+    data = await state.get_data()
+    agency = data.get("agency", "Unknown")
+    location = data.get("location", "Unknown")
+    text = message.text
+    
+    try:
+        result = await analyze_text(text, agency, location)
+        final_text = (
+            f"🏛️ **Agency:** {agency}\n"
+            f"📍 **Location:** {location}\n\n"
+            f"🤖 **Analysis Result:**\n\n{result}"
+        )
+        await waiting_msg.edit_text(final_text)
+        logger.info("Result sent successfully.")
+    except Exception as e:
+        logger.error(f"ERROR: {e}", exc_info=True)
+        await waiting_msg.edit_text(f"❌ Error: {e}")
+    finally:
+        await state.clear()
+        logger.info("State cleared.")
+
+# --- ОТЛАДОЧНЫЙ ОБРАБОТАТЕЛЬ (ЛОВУШКА) ---
+# Сработает, если сообщение не подошло ни под один фильтр выше
+@router.message(F.text)
+async def catch_all_text(message: types.Message, state: FSMContext):
+    current_state = await state.get_state()
+    logger.warning(f"CATCH_ALL: User sent text but no handler matched! Current State: {current_state}")
+    logger.warning(f"Message content: {message.text[:50]}...")
+    await message.answer(
+        f"⚠️ I received your message, but I'm not sure what to do with it.\n"
+        f"Current state: {current_state}\n"
+        f"Try /start to reset."
+    )

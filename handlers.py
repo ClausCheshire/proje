@@ -59,11 +59,15 @@ async def process_location(message: types.Message, state: FSMContext):
 
 @router.message(AnalysisState.text, F.text)
 async def process_text(message: types.Message, state: FSMContext):
-    logger.info(f"STATE_TEXT: Received {len(message.text)} chars from user_id={message.from_user.id}")
+    logger.info("=" * 50)
+    logger.info(f"📩 RECEIVED TEXT for analysis")
+    logger.info(f"   User ID: {message.from_user.id}")
+    logger.info(f"   Text length: {len(message.text)}")
+    logger.info("=" * 50)
     
     await message.answer(f"✅ Получено {len(message.text)} символов. Начинаю анализ...")
     waiting_msg = await message.answer("⏳ Анализирую с помощью GigaChat...")
-    logger.info("Sent 'Analyzing...' message")
+    logger.info("✅ Sent 'Analyzing...' message to user")
     
     data = await state.get_data()
     agency = data.get("agency", "Не указано")
@@ -71,12 +75,13 @@ async def process_text(message: types.Message, state: FSMContext):
     text = message.text
     
     try:
-        logger.info("Calling analyze_text()...")
+        logger.info("🔄 Calling analyze_text()...")
         result = await analyze_text(text, agency, location)
-        logger.info(f"analyze_text() returned, result length: {len(result)}")
+        logger.info(f"✅ analyze_text() returned, result length: {len(result)}")
         
         if result.startswith("❌") or result.startswith("⏰"):
             await waiting_msg.edit_text(result)
+            logger.info("⚠️ Sent error message to user")
         else:
             final_text = (
                 f"🏛️ **Орган:** {agency}\n"
@@ -84,26 +89,22 @@ async def process_text(message: types.Message, state: FSMContext):
                 f"🤖 **Результат анализа:**\n\n{result}"
             )
             await waiting_msg.edit_text(final_text)
-        logger.info("Final result sent to user")
+            logger.info("✅ Sent final result to user")
         
     except Exception as e:
-        logger.error(f"UNEXPECTED ERROR: {e}", exc_info=True)
+        logger.error(f"❌ UNEXPECTED ERROR: {e}", exc_info=True)
         await waiting_msg.edit_text(f"❌ Неожиданная ошибка: {e}")
     finally:
         await state.clear()
-        logger.info("State cleared")
-
-@router.message(Command("cancel"))
-async def cmd_cancel(message: types.Message, state: FSMContext):
-    logger.info(f"CMD_CANCEL: user_id={message.from_user.id}")
-    await state.clear()
-    await message.answer("❌ Сеанс анализа отменён. Используй /analysis, чтобы начать заново.")
+        logger.info("🧹 State cleared")
+        logger.info("=" * 50)
 
 # Ловушка для отладки — если сообщение не обработано
 @router.message(F.text)
 async def catch_all_text(message: types.Message, state: FSMContext):
     current_state = await state.get_state()
     logger.warning(f"CATCH_ALL: Text not handled! Current State: {current_state}")
+
 
 
 

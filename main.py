@@ -1,24 +1,25 @@
+# -*- coding: utf-8 -*-
 import asyncio
 import logging
 from aiogram import Bot, Dispatcher
 from config import BOT_TOKEN
 from handlers import router
 
-# Включаем логирование
+# Р’РєР»СЋС‡Р°РµРј Р»РѕРіРёСЂРѕРІР°РЅРёРµ
 logging.basicConfig(level=logging.INFO)
 
 async def main():
     bot = Bot(token=BOT_TOKEN)
     dp = Dispatcher()
     
-    # Регистрируем роутер с хендлерами
+    # Р РµРіРёСЃС‚СЂРёСЂСѓРµРј СЂРѕСѓС‚РµСЂ СЃ С…РµРЅРґР»РµСЂР°РјРё
     dp.include_router(router)
     
-    # Запуск опроса (Long Polling) - подходит для Railway
+    # Р—Р°РїСѓСЃРє РѕРїСЂРѕСЃР° (Long Polling) - РїРѕРґС…РѕРґРёС‚ РґР»СЏ Railway
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("Бот выключен")
+        print("Р‘РѕС‚ РІС‹РєР»СЋС‡РµРЅ")

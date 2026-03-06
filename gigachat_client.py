@@ -69,6 +69,7 @@ async def evaluate_answer(question: str, user_answer: str, subject: str, exam_na
     print(f"🚀 Evaluating answer for subject={subject}, exam={exam_name}")
     
     system_prompt = (
+        "⚠️ ВНИМАНИЕ: За бессвязный или не по теме ответ ставь 0-10 баллов. Не бойся низких оценок."
     "Ты - строгий экзаменатор по обществознанию с опытом проверки олимпиадных работ.\n"
     "Твоя задача - оценить ответ ученика от 0 до 100 баллов ОБЪЕКТИВНО.\n"
     "\n"
@@ -145,6 +146,7 @@ async def evaluate_answer(question: str, user_answer: str, subject: str, exam_na
         return f"❌ Ошибка: {type(e).__name__}: {str(e)}"
     finally:
         await connector.close()
+
 
 
 

@@ -3,47 +3,49 @@ import aiohttp
 import config
 import json
 import base64
-from urllib.parse import urlencode
 
 AUTH_URL = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
 CHAT_URL = "https://gigachat.devices.sberbank.ru/api/v1/chat/completions"
 
 async def get_gigachat_token():
+    # Пробуем основной scope, но логируем для отладки
     scope = "GIGACHAT_API_PERS"
     
-    # 1. Формируем Basic Auth вручную (client_id:client_secret)
+    # Формируем Basic Auth вручную
     credentials = f"{config.GIGACHAT_CLIENT_ID}:{config.GIGACHAT_CLIENT_SECRET}"
     encoded_credentials = base64.b64encode(credentials.encode('utf-8')).decode('utf-8')
     
-    # 2. Заголовки
     headers = {
         "Content-Type": "application/x-www-form-urlencoded",
         "Accept": "application/json",
         "Authorization": f"Basic {encoded_credentials}"
     }
     
-    # 3. Тело запроса (строка, не dict!)
-    body = f"scope={scope}"
+    # Отправляем данные как dict - aiohttp сам закодирует правильно
+    data = {"scope": scope}
     
     connector = aiohttp.TCPConnector(ssl=False)
     
     async with aiohttp.ClientSession(connector=connector) as session:
-        # Отправляем как строку, чтобы точно ушел form-urlencoded
-        async with session.post(AUTH_URL, data=body, headers=headers) as resp:
+        async with session.post(AUTH_URL, data=data, headers=headers) as resp:
             response_text = await resp.text()
             
-            # Логирование для отладки (скрываем секрет)
+            # Детальное логирование
             print(f"🔍 Auth Request: POST {AUTH_URL}")
-            print(f"🔑 Client ID Start: {config.GIGACHAT_CLIENT_ID[:5]}...")
-            print(f"📡 Response Status: {resp.status}")
-            print(f"📄 Response Body: {response_text}")
+            print(f"🔑 Client ID: {config.GIGACHAT_CLIENT_ID[:10]}...")
+            print(f"📡 Status: {resp.status}")
+            print(f"📄 Body: '{response_text}'")
+            print(f"🎯 Scope used: {scope}")
             
             if resp.status == 200:
                 json_data = await resp.json()
-                print("✅ Token received successfully")
+                print("✅ Token received")
                 return json_data["access_token"]
             else:
-                print(f"❌ GigaChat Auth Failed: {resp.status}")
+                print(f"❌ Auth Failed: {resp.status}")
+                # Пробуем альтернативный scope для диагностики
+                if scope == "GIGACHAT_API_PERS":
+                    print("💡 Hint: Try changing scope to 'GIGACHAT_API' in code")
                 raise Exception(f"GigaChat auth error: {resp.status} - {response_text}")
 
 async def analyze_text(text: str, agency: str = "Unknown", location: str = "Unknown") -> str:
@@ -82,4 +84,5 @@ async def analyze_text(text: str, agency: str = "Unknown", location: str = "Unkn
             else:
                 error_text = await resp.text()
                 return f"Analysis error: {resp.status} - {error_text}"
+
 

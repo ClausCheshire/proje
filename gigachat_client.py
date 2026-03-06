@@ -8,8 +8,8 @@ AUTH_URL = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
 CHAT_URL = "https://gigachat.devices.sberbank.ru/api/v1/chat/completions"
 
 async def get_gigachat_token():
-    # Пробуем основной scope, но логируем для отладки
-    scope = "GIGACHAT_API_PERS"
+    # Пробуем два варианта scope по очереди
+    scopes_to_try = ["GIGACHAT_API_PERS", "GIGACHAT_API"]
     
     # Формируем Basic Auth вручную
     credentials = f"{config.GIGACHAT_CLIENT_ID}:{config.GIGACHAT_CLIENT_SECRET}"
@@ -20,6 +20,30 @@ async def get_gigachat_token():
         "Accept": "application/json",
         "Authorization": f"Basic {encoded_credentials}"
     }
+    
+    connector = aiohttp.TCPConnector(ssl=False)
+    
+    for scope in scopes_to_try:
+        data = {"scope": scope}
+        
+        async with aiohttp.ClientSession(connector=connector) as session:
+            async with session.post(AUTH_URL, data=data, headers=headers) as resp:
+                response_text = await resp.text()
+                
+                print(f"🔍 Trying scope: {scope}")
+                print(f"📡 Status: {resp.status}")
+                print(f"📄 Body: '{response_text}'")
+                
+                if resp.status == 200:
+                    json_data = await resp.json()
+                    print(f"✅ Token received with scope: {scope}")
+                    return json_data["access_token"]
+                else:
+                    print(f"❌ Failed with scope: {scope}")
+                    # Если это была последняя попытка — выбрасываем ошибку
+                    if scope == scopes_to_try[-1]:
+                        raise Exception(f"GigaChat auth error: {resp.status} - {response_text}")
+                    # Иначе продолжаем цикл со следующим scope
     
     # Отправляем данные как dict - aiohttp сам закодирует правильно
     data = {"scope": scope}
@@ -84,5 +108,6 @@ async def analyze_text(text: str, agency: str = "Unknown", location: str = "Unkn
             else:
                 error_text = await resp.text()
                 return f"Analysis error: {resp.status} - {error_text}"
+
 
 

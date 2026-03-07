@@ -1,24 +1,3 @@
-# -*- coding: utf-8 -*-
-import aiohttp
-import config
-import asyncio
-import re
-import time
-import base64
-
-AUTH_URL = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
-CHAT_URL = "https://gigachat.devices.sberbank.ru/api/v1/chat/completions"
-
-# Таймауты
-AUTH_TIMEOUT = aiohttp.ClientTimeout(total=30)
-CHAT_TIMEOUT = aiohttp.ClientTimeout(total=90)
-
-# Кэш токена (живёт 30 минут)
-_token_cache = {
-    "token": None,
-    "expires_at": 0
-}
-
 async def get_gigachat_token():
     """Получение токена через OAuth (Client ID + Client Secret)"""
     current_time = time.time()
@@ -28,15 +7,20 @@ async def get_gigachat_token():
         print(f"✅ [AUTH] Using cached token (expires in {_token_cache['expires_at'] - current_time:.0f}s)")
         return _token_cache["token"]
     
+    print("=" * 60)
     print("🔑 [AUTH] Requesting new token from SberCloud...")
-    print(f"🔑 [AUTH] Client ID: {config.GIGACHAT_CLIENT_ID[:10]}...")
+    print("=" * 60)
+    print(f"🔑 [AUTH] Client ID: {config.GIGACHAT_CLIENT_ID[:10]}...{config.GIGACHAT_CLIENT_ID[-5:]}")
     print(f"🔑 [AUTH] Client Secret length: {len(config.GIGACHAT_CLIENT_SECRET)}")
+    print(f"🔑 [AUTH] Auth URL: {AUTH_URL}")
+    print("=" * 60)
     
     # Пробуем scope по очереди (PERS сначала, потом обычный)
     scopes_to_try = ["GIGACHAT_API_PERS", "GIGACHAT_API"]
     
     for scope in scopes_to_try:
-        print(f"🔑 [AUTH] Trying scope: {scope}")
+        print(f"\n🔑 [AUTH] Trying scope: {scope}")
+        print("-" * 60)
         
         # Формируем Basic Auth
         credentials = f"{config.GIGACHAT_CLIENT_ID}:{config.GIGACHAT_CLIENT_SECRET}"
@@ -51,254 +35,87 @@ async def get_gigachat_token():
         # ТОЛЬКО scope, БЕЗ RqUID (RqUID нужен только для /chat/completions)
         data = {"scope": scope}
         
+        print(f"📤 [AUTH] Request headers: Content-Type={headers['Content-Type']}")
+        print(f"📤 [AUTH] Request data: scope={scope}")
+        
         connector = aiohttp.TCPConnector(ssl=False)
         
         try:
             async with aiohttp.ClientSession(connector=connector, timeout=AUTH_TIMEOUT) as session:
                 async with session.post(AUTH_URL, data=data, headers=headers) as resp:
                     response_text = await resp.text()
-                    print(f"📡 [AUTH] Status: {resp.status}")
-                    print(f"📡 [AUTH] Response body: {response_text[:300]}")
+                    
+                    print(f"📡 [AUTH] Response Status: {resp.status}")
+                    print(f"📡 [AUTH] Response Headers: {dict(resp.headers)}")
+                    print(f"📡 [AUTH] Response Body: {response_text}")
+                    print("-" * 60)
                     
                     if resp.status == 200:
-                        json_data = await resp.json()
-                        access_token = json_data["access_token"]
-                        expires_in = json_data.get("expires_in", 1800)
-                        
-                        # Сохраняем в кэш (с запасом 5 минут)
-                        _token_cache["token"] = access_token
-                        _token_cache["expires_at"] = current_time + expires_in - 300
-                        
-                        print(f"✅ [AUTH] Token received with scope '{scope}'")
-                        print(f"✅ [AUTH] Token expires in: {expires_in - 300}s")
-                        print(f"✅ [AUTH] Token starts with: {access_token[:20]}...")
-                        return access_token
+                        try:
+                            json_data = await resp.json()
+                            access_token = json_data["access_token"]
+                            expires_in = json_data.get("expires_in", 1800)
+                            
+                            # Сохраняем в кэш (с запасом 5 минут)
+                            _token_cache["token"] = access_token
+                            _token_cache["expires_at"] = current_time + expires_in - 300
+                            
+                            print(f"✅ [AUTH] Token received with scope '{scope}'")
+                            print(f"✅ [AUTH] Token expires in: {expires_in - 300}s")
+                            print(f"✅ [AUTH] Token starts with: {access_token[:20]}...")
+                            print("=" * 60)
+                            return access_token
+                        except Exception as json_err:
+                            print(f"❌ [AUTH] Failed to parse JSON response: {json_err}")
+                            print(f"❌ [AUTH] Raw response: {response_text}")
+                            raise Exception(f"Invalid JSON response: {json_err}")
                     else:
-                        print(f"❌ [AUTH] Failed with scope '{scope}': {resp.status}")
-                        print(f"❌ [AUTH] Error details: {response_text[:200]}")
+                        print(f"❌ [AUTH] Failed with scope '{scope}': HTTP {resp.status}")
+                        
+                        # Пытаемся распарсить ошибку в JSON формате
+                        try:
+                            error_json = await resp.json()
+                            print(f"❌ [AUTH] Error JSON: {error_json}")
+                            error_code = error_json.get("error", "unknown")
+                            error_desc = error_json.get("error_description", "No description")
+                            print(f"❌ [AUTH] Error Code: {error_code}")
+                            print(f"❌ [AUTH] Error Description: {error_desc}")
+                        except:
+                            print(f"❌ [AUTH] Error Body (plain text): {response_text}")
+                        
+                        # Если это был последний scope — выбрасываем ошибку
+                        if scope == scopes_to_try[-1]:
+                            print("=" * 60)
+                            print("❌ [AUTH] GigaChat auth failed with all scopes")
+                            print("=" * 60)
+                            print("💡 [AUTH] Troubleshooting:")
+                            print("  1. Check IAM → Applications → OAuth Client (not API Key)")
+                            print("  2. Check role 'gigachat.ai.user' is assigned")
+                            print("  3. Check for spaces/quotes in Railway Variables")
+                            print("  4. Try curl test from documentation")
+                            print("=" * 60)
+                            raise Exception(
+                                f"GigaChat auth failed: HTTP {resp.status}\n"
+                                f"Error: {response_text[:500]}\n"
+                                f"Check: 1) OAuth Client in IAM, 2) Role assigned, 3) No spaces in keys"
+                            )
+                        else:
+                            print(f"⚠️ [AUTH] Will try next scope: {scopes_to_try[scopes_to_try.index(scope) + 1]}")
                         
         except asyncio.TimeoutError:
-            print(f"⏰ [AUTH] Timeout with scope '{scope}'")
+            print(f"⏰ [AUTH] Timeout with scope '{scope}' (>{AUTH_TIMEOUT.total}s)")
+            if scope == scopes_to_try[-1]:
+                raise Exception("GigaChat auth timeout. Check network connection.")
+        except aiohttp.ClientConnectionError as conn_err:
+            print(f"🔌 [AUTH] Connection error with scope '{scope}': {conn_err}")
+            if scope == scopes_to_try[-1]:
+                raise Exception(f"Connection failed: {conn_err}")
         except Exception as e:
-            print(f"⚠️ [AUTH] Error with scope '{scope}': {type(e).__name__}: {str(e)}")
+            print(f"⚠️ [AUTH] Unexpected error with scope '{scope}': {type(e).__name__}: {str(e)}")
+            if scope == scopes_to_try[-1]:
+                raise
         finally:
             await connector.close()
     
     # Если оба scope не сработали
-    print("❌ [AUTH] GigaChat auth failed with all scopes")
-    print("💡 [AUTH] Check: 1) OAuth Client in IAM → Applications, 2) Role gigachat.ai.user assigned")
-    raise Exception(
-        "GigaChat auth failed with all scopes. Check credentials in SberCloud.\n"
-        "1. Make sure you're using OAuth Client (not API Key)\n"
-        "2. Check IAM → Applications → Your App → OAuth Client\n"
-        "3. Make sure role 'gigachat.ai.user' is assigned\n"
-        "4. Check for spaces/quotes in Railway Variables"
-    )
-    
-    # Если оба scope не сработали
     raise Exception("GigaChat auth failed with all scopes. Check credentials in SberCloud.")
-
-async def generate_question(subject: str) -> str:
-    """Генерация вопроса для подготовки к олимпиадам по обществознанию"""
-    start_time = time.time()
-    print(f"🚀 [GEN] Starting question generation: subject={subject}")
-    
-    subject_clean = subject.strip()
-    if not subject_clean or len(subject_clean) < 2:
-        return "❌ Не удалось определить раздел"
-    
-    try:
-        token = await get_gigachat_token()
-    except Exception as e:
-        return f"❌ Ошибка авторизации: {e}"
-    
-    system_prompt = (
-        "Ты — опытный преподаватель обществознания. Создай вопрос с развёрнутым ответом.\n"
-        f"Раздел: {subject}. Требуй анализа ситуации, аргументации, опоры на теорию. Не давай ответ."
-    )
-    
-    payload = {
-        "model": "GigaChat",
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"Создай вопрос по разделу '{subject}' для подготовки к экзамену."}
-        ],
-        "profanity_check": True
-    }
-    
-    headers = {
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-        "Authorization": f"Bearer {token}"
-    }
-    
-    connector = aiohttp.TCPConnector(ssl=False)
-    
-    try:
-        print(f"📤 [GEN] Sending request to GigaChat API...")
-        async with aiohttp.ClientSession(connector=connector, timeout=CHAT_TIMEOUT) as session:
-            async with session.post(CHAT_URL, json=payload, headers=headers) as resp:
-                elapsed = time.time() - start_time
-                response_text = await resp.text()
-                print(f"📡 [GEN] Response in {elapsed:.1f}s: Status={resp.status}")
-                
-                if resp.status == 200:
-                    data = await resp.json()
-                    finish_reason = data["choices"][0].get("finish_reason")
-                    
-                    if finish_reason == "blacklist":
-                        return "⚠️ Вопрос не сгенерирован из-за ограничений контента. Попробуй другой раздел."
-                    
-                    result = data["choices"][0]["message"]["content"].strip()
-                    print(f"✅ [GEN] Success! Result length: {len(result)}")
-                    return result
-                else:
-                    print(f"❌ [GEN] API Error {resp.status}: {response_text[:200]}")
-                    return f"❌ Ошибка сервиса: {resp.status}. Попробуй ещё раз."
-                    
-    except asyncio.TimeoutError:
-        elapsed = time.time() - start_time
-        print(f"⏰ [GEN] TIMEOUT after {elapsed:.1f}s")
-        return "⏰ Запрос занял слишком много времени. Попробуй ещё раз или выбери другой раздел."
-        
-    except aiohttp.ClientConnectionError as e:
-        print(f"🔌 [GEN] Connection error: {e}")
-        return "🔌 Ошибка соединения с сервисом. Проверь интернет или попробуй позже."
-        
-    except Exception as e:
-        elapsed = time.time() - start_time
-        print(f"⚠️ [GEN] Unexpected error after {elapsed:.1f}s: {type(e).__name__}: {e}")
-        return f"❌ Неожиданная ошибка: {type(e).__name__}. Попробуй ещё раз."
-        
-    finally:
-        await connector.close()
-        print("🔌 [GEN] Connector closed")
-
-async def evaluate_answer(question: str, user_answer: str, subject: str) -> str:
-    """Оценка ответа ученика от 1 до 5 баллов (ТОЛЬКО 5-балльная шкала)"""
-    start_time = time.time()
-    print(f"🚀 [EVAL] Starting evaluation: subject={subject}, answer_len={len(user_answer)}")
-    
-    try:
-        token = await get_gigachat_token()
-    except Exception as e:
-        return f"❌ Ошибка авторизации: {e}"
-    
-    system_prompt = (
-        "⚠️ КРИТИЧЕСКИ ВАЖНО: Ты выводишь оценку ТОЛЬКО в формате 'Оценка: X/5'.\n"
-        "⛔ ЗАПРЕЩЕНО под любым предлогом:\n"
-        "  • Писать '100', 'баллов из 100', '/100', 'сто баллов'\n"
-        "  • Показывать промежуточные расчёты или внутреннюю шкалу\n"
-        "  • Использовать квадратные скобки [...] или описывать, что 'должно быть'\n"
-        "  • Писать что-либо кроме 'Оценка: 1/5', 'Оценка: 2/5' и т.д.\n"
-        "Если нарушишь — ученик получит неверную информацию.\n"
-        "\n"
-        "Ты — строгий экзаменатор. Оценивай содержание, а не уверенность.\n"
-        "🚫 ИГНОРИРУЙ: 'это правильно', 'очевидно' без доказательств.\n"
-        "✅ ДАВАЙ БАЛЛЫ ТОЛЬКО ЗА: термины с определениями, ссылки на НПА, примеры.\n"
-        "\n"
-        "📊 ВНУТРЕННЯЯ ЛОГИКА (НЕ ВЫВОДИТЬ): 0-20→1/5, 21-40→2/5, 41-60→3/5, 61-80→4/5, 81-100→5/5\n"
-        "\n"
-        "📝 ФОРМАТ ОТВЕТА (ПИШИ КОНКРЕТНОЕ СОДЕРЖАНИЕ, НЕ ОПИСАНИЯ):\n"
-        "1. 📊 Оценка: X/5  ← ЕДИНСТВЕННАЯ оценка в ответе!\n"
-        "2. ✅ Что верно: [ПИШИ КОНКРЕТНЫЕ ПУНКТЫ, если есть что похвалить; если нет — ПРОПУСТИ раздел]\n"
-        "3. ❌ Что не верно: [ПИШИ КОНКРЕТНЫЕ ОШИБКИ]\n"
-        "4. 💡 Как улучшить: [ПИШИ КОНКРЕТНЫЕ РЕКОМЕНДАЦИИ]\n"
-        "5. 🎯 Идеальный ответ: [НАПИШИ ПОЛНОСТЬЮ ПРИМЕР ОТВЕТА на 3-4 предложения]\n"
-        "\n"
-        "⛔ ПРАВИЛА НАПИСАНИЯ:\n"
-        "• НИКОГДА не используй квадратные скобки [...] в финальном ответе\n"
-        "• НИКОГДА не пиши 'должен', 'следует', 'нужно добавить' — пиши САМУ рекомендацию\n"
-        "• Если нечего похвалить — просто НЕ ПИШИ раздел '✅ Что верно'\n"
-        "\n"
-        "⛔ ФИНАЛЬНАЯ ПРОВЕРКА: В ответе НЕТ упоминаний '100' и квадратных скобок."
-    )
-    
-    payload = {
-        "model": "GigaChat",
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"Раздел: {subject}\nВопрос:\n{question}\n\nОтвет ученика:\n{user_answer[:2500]}"}
-        ],
-        "profanity_check": True
-    }
-    
-    headers = {
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-        "Authorization": f"Bearer {token}"
-    }
-    
-    connector = aiohttp.TCPConnector(ssl=False)
-    
-    try:
-        print(f"📤 [EVAL] Sending evaluation request...")
-        async with aiohttp.ClientSession(connector=connector, timeout=CHAT_TIMEOUT) as session:
-            async with session.post(CHAT_URL, json=payload, headers=headers) as resp:
-                elapsed = time.time() - start_time
-                response_text = await resp.text()
-                print(f"📡 [EVAL] Response in {elapsed:.1f}s: Status={resp.status}")
-                
-                if resp.status == 200:
-                    data = await resp.json()
-                    finish_reason = data["choices"][0].get("finish_reason")
-                    
-                    if finish_reason == "blacklist":
-                        return "⚠️ Не удалось оценить ответ из-за ограничений контента."
-                    
-                    result = data["choices"][0]["message"]["content"].strip()
-                    
-                    # === АГРЕССИВНАЯ ПОСТ-ОБРАБОТКА ===
-                    patterns_to_remove = [
-                        r'Оценка:\s*\d+/100',
-                        r'\d+\s*баллов?\s*из\s*100',
-                        r'\d+/100\b',
-                        r'\(\s*\d+/100\s*\)',
-                        r'сто\s*баллов?',
-                        r'100-балльной?',
-                        r'шкала.*?100',
-                    ]
-                    for pattern in patterns_to_remove:
-                        result = re.sub(pattern, '', result, flags=re.IGNORECASE)
-                    
-                    result = re.sub(r'\(\s*\d+/100\s*\)', '', result)
-                    result = re.sub(r'\[\s*\d+/100\s*\]', '', result)
-                    
-                    def keep_only_5point(match):
-                        score_100 = int(match.group(1))
-                        if score_100 <= 20: return "Оценка: 1/5"
-                        elif score_100 <= 40: return "Оценка: 2/5"
-                        elif score_100 <= 60: return "Оценка: 3/5"
-                        elif score_100 <= 80: return "Оценка: 4/5"
-                        else: return "Оценка: 5/5"
-                    result = re.sub(r'Оценка:\s*(\d+)/100', keep_only_5point, result)
-                    
-                    if "✅ Что верно:" in result:
-                        start = result.find("✅ Что верно:")
-                        end = result.find("❌ Что не верно:")
-                        if end == -1:
-                            end = result.find("💡 Как улучшить:")
-                        if end != -1 and start != -1:
-                            section = result[start:end].strip()
-                            if any(p in section.lower() for p in ['нет верных', 'ничего не верно', 'верных пунктов']):
-                                result = result[:start] + result[end:]
-                    
-                    if re.search(r'оценка.*?100|100.*?балл', result, re.IGNORECASE):
-                        result = re.sub(r'\b100\b', '', result)
-                    
-                    result = re.sub(r'\n{3,}', '\n\n', result).strip()
-                    
-                    print(f"✅ [EVAL] Success! Cleaned result length: {len(result)}")
-                    return result
-                    
-                else:
-                    return f"❌ Ошибка оценки: {resp.status}"
-                    
-    except asyncio.TimeoutError:
-        return "⏰ Оценка заняла слишком много времени. Попробуй с ответом покороче."
-    except Exception as e:
-        return f"❌ Ошибка: {type(e).__name__}: {str(e)}"
-    finally:
-        await connector.close()
-
-

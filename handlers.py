@@ -11,12 +11,10 @@ from gigachat_client import generate_question, evaluate_answer
 logger = logging.getLogger(__name__)
 router = Router()
 
-# === Машина состояний ===
 class StudyState(StatesGroup):
-    subject = State()           # Выбор раздела
-    waiting_answer = State()    # Ожидание ответа пользователя
+    subject = State()
+    waiting_answer = State()
 
-# === Клавиатура с разделами ===
 def get_subject_keyboard():
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📜 Право", callback_data="subject_law")],
@@ -25,7 +23,6 @@ def get_subject_keyboard():
     ])
     return keyboard
 
-# === Команда /start ===
 @router.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
     await state.clear()
@@ -39,7 +36,6 @@ async def cmd_start(message: types.Message, state: FSMContext):
         "Нажми /study чтобы начать тренировку!"
     )
 
-# === Команда /study ===
 @router.message(Command("study"))
 async def cmd_study(message: types.Message, state: FSMContext):
     await state.clear()
@@ -50,7 +46,6 @@ async def cmd_study(message: types.Message, state: FSMContext):
         reply_markup=get_subject_keyboard()
     )
 
-# === Обработка выбора раздела ===
 @router.callback_query(F.data.startswith("subject_"))
 async def process_subject(callback: types.CallbackQuery, state: FSMContext):
     subject_map = {
@@ -68,7 +63,6 @@ async def process_subject(callback: types.CallbackQuery, state: FSMContext):
     try:
         question = await generate_question(subject)
         
-        # Проверка на ошибку в результате
         if question.startswith("❌") or question.startswith("⏰") or question.startswith("🔌") or question.startswith("⚠️"):
             await waiting_msg.edit_text(
                 f"{question}\n\n"
@@ -99,7 +93,6 @@ async def process_subject(callback: types.CallbackQuery, state: FSMContext):
     
     await callback.answer()
 
-# === Обработка ответа пользователя ===
 @router.message(StudyState.waiting_answer, F.text)
 async def process_answer(message: types.Message, state: FSMContext):
     user_answer = message.text
@@ -115,18 +108,15 @@ async def process_answer(message: types.Message, state: FSMContext):
     try:
         evaluation = await evaluate_answer(question, user_answer, subject)
         
-        # === ФИНАЛЬНАЯ СТРАХОВКА: убираем остатки 100-балльной шкалы ===
         evaluation = re.sub(r'Оценка:\s*\d+/100', 'Оценка: 3/5', evaluation)
         evaluation = re.sub(r'\d+\s*баллов?\s*из\s*100', '', evaluation)
         evaluation = re.sub(r'\(\s*\d+/100\s*\)', '', evaluation)
         evaluation = re.sub(r'\[\s*\d+/100\s*\]', '', evaluation)
         
-        # Если оценка всё ещё содержит "100" — заменяем на заглушку
         if '/100' in evaluation or '100 баллов' in evaluation.lower():
             logger.warning("⚠️ 100-point scale leaked through, applying emergency fix")
             evaluation = evaluation.replace('/100', '/5').replace('100 баллов', '5 баллов')
         
-        # Убираем лишние пустые строки
         evaluation = re.sub(r'\n{3,}', '\n\n', evaluation).strip()
         
         final_text = (
@@ -145,14 +135,12 @@ async def process_answer(message: types.Message, state: FSMContext):
         await state.clear()
         logger.info("State cleared")
 
-# === Команда /cancel ===
 @router.message(Command("cancel"))
 async def cmd_cancel(message: types.Message, state: FSMContext):
     await state.clear()
     logger.info(f"CMD_CANCEL: user_id={message.from_user.id}")
     await message.answer("❌ Тренировка отменена. Используй /study, чтобы начать заново.")
 
-# === Ловушка для отладки (необязательно) ===
 @router.message(F.text)
 async def catch_all_text(message: types.Message, state: FSMContext):
     current_state = await state.get_state()

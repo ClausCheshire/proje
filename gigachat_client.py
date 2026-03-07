@@ -4,112 +4,14 @@ import config
 import asyncio
 import re
 import time
-import base64
 
-AUTH_URL = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
 CHAT_URL = "https://gigachat.devices.sberbank.ru/api/v1/chat/completions"
 
-# Таймауты
-AUTH_TIMEOUT = aiohttp.ClientTimeout(total=30)
+# Таймаут для запросов
 CHAT_TIMEOUT = aiohttp.ClientTimeout(total=90)
 
-# Кэш токена (живёт 30 минут)
-_token_cache = {
-    "token": None,
-    "expires_at": 0
-}
-
-async def get_gigachat_token():
-    """Получение токена через OAuth (Client ID + Client Secret)"""
-    current_time = time.time()
-    
-    # Проверяем кэш
-    if _token_cache["token"] and current_time < _token_cache["expires_at"]:
-        token_preview = f"{_token_cache['token'][:20]}...{_token_cache['token'][-10:]}"
-        print(f"✅ [AUTH] Using CACHED token: {token_preview}")
-        print(f"✅ [AUTH] Token expires in: {_token_cache['expires_at'] - current_time:.0f}s")
-        return _token_cache["token"]
-    
-    print("=" * 70)
-    print("🔑 [AUTH] Requesting NEW token from SberCloud...")
-    print("=" * 70)
-    print(f"🔑 [AUTH] Client ID: {config.GIGACHAT_CLIENT_ID[:10]}...")
-    print(f"🔑 [AUTH] Client Secret length: {len(config.GIGACHAT_CLIENT_SECRET)}")
-    print("=" * 70)
-    
-    # Пробуем scope по очереди
-    scopes_to_try = ["GIGACHAT_API_PERS", "GIGACHAT_API"]
-    
-    for scope in scopes_to_try:
-        print(f"\n🔑 [AUTH] Trying scope: {scope}")
-        print("-" * 70)
-        
-        # Формируем Basic Auth
-        credentials = f"{config.GIGACHAT_CLIENT_ID}:{config.GIGACHAT_CLIENT_SECRET}"
-        encoded_credentials = base64.b64encode(credentials.encode('utf-8')).decode('utf-8')
-        
-        headers = {
-            "Content-Type": "application/x-www-form-urlencoded",
-            "Accept": "application/json",
-            "Authorization": f"Basic {encoded_credentials}"
-        }
-        
-        data = {"scope": scope}
-        
-        connector = aiohttp.TCPConnector(ssl=False)
-        
-        try:
-            async with aiohttp.ClientSession(connector=connector, timeout=AUTH_TIMEOUT) as session:
-                async with session.post(AUTH_URL, data=data, headers=headers) as resp:
-                    response_text = await resp.text()
-                    
-                    print(f"📡 [AUTH] Response Status: {resp.status}")
-                    print(f"📡 [AUTH] Response Body: {response_text[:500]}")
-                    print("-" * 70)
-                    
-                    if resp.status == 200:
-                        try:
-                            json_data = await resp.json()
-                            access_token = json_data["access_token"]
-                            expires_in = json_data.get("expires_in", 1800)
-                            
-                            # Сохраняем в кэш
-                            _token_cache["token"] = access_token
-                            _token_cache["expires_at"] = current_time + expires_in - 300
-                            
-                            token_preview = f"{access_token[:20]}...{access_token[-10:]}"
-                            print(f"✅ [AUTH] TOKEN RECEIVED: {token_preview}")
-                            print(f"✅ [AUTH] Token length: {len(access_token)} chars")
-                            print(f"✅ [AUTH] Token expires in: {expires_in - 300}s")
-                            print(f"✅ [AUTH] Token will expire at: {time.strftime('%H:%M:%S', time.localtime(_token_cache['expires_at']))}")
-                            print("=" * 70)
-                            return access_token
-                        except Exception as json_err:
-                            print(f"❌ [AUTH] Failed to parse JSON: {json_err}")
-                            raise Exception(f"Invalid JSON response: {json_err}")
-                    else:
-                        print(f"❌ [AUTH] Failed with scope '{scope}': HTTP {resp.status}")
-                        
-        except asyncio.TimeoutError:
-            print(f"⏰ [AUTH] Timeout with scope '{scope}'")
-        except Exception as e:
-            print(f"⚠️ [AUTH] Error with scope '{scope}': {type(e).__name__}: {str(e)}")
-        finally:
-            await connector.close()
-    
-    # Если оба scope не сработали
-    print("=" * 70)
-    print("❌ [AUTH] GigaChat auth failed with all scopes")
-    print("=" * 70)
-    raise Exception(
-        "GigaChat auth failed with all scopes. Check credentials in SberCloud.\n"
-        "1. Make sure you're using OAuth Client (IAM → Applications)\n"
-        "2. Check role 'gigachat.ai.user' is assigned\n"
-        "3. Check for spaces/quotes in Railway Variables"
-    )
-
 async def generate_question(subject: str) -> str:
-    """Генерация вопроса с ЯВНОЙ передачей токена"""
+    """Генерация вопроса с ПРЯМОЙ передачей Access Token"""
     start_time = time.time()
     print(f"\n{'=' * 70}")
     print(f"🚀 [GEN] Starting question generation: subject={subject}")
@@ -119,16 +21,11 @@ async def generate_question(subject: str) -> str:
     if not subject_clean or len(subject_clean) < 2:
         return "❌ Не удалось определить раздел"
     
-    # === ЯВНОЕ ПОЛУЧЕНИЕ ТОКЕНА ===
-    print("🔑 [GEN] Requesting access token...")
-    try:
-        access_token = await get_gigachat_token()
-        token_preview = f"{access_token[:20]}...{access_token[-10:]}"
-        print(f"✅ [GEN] Access token received: {token_preview}")
-    except Exception as e:
-        error_msg = f"❌ Ошибка авторизации: {e}"
-        print(error_msg)
-        return error_msg
+    # === Access Token из config (без OAuth) ===
+    access_token = config.GIGACHAT_ACCESS_TOKEN
+    token_preview = f"{access_token[:20]}...{access_token[-10:]}"
+    print(f"🔑 [GEN] Using Access Token: {token_preview}")
+    print(f"🔑 [GEN] Token length: {len(access_token)} chars")
     
     system_prompt = (
         "Ты — опытный преподаватель обществознания. Создай вопрос с развёрнутым ответом.\n"
@@ -148,12 +45,12 @@ async def generate_question(subject: str) -> str:
     headers = {
         "Content-Type": "application/json",
         "Accept": "application/json",
-        "Authorization": f"Bearer {access_token}"  # ← ЯВНАЯ ПЕРЕДАЧА
+        "Authorization": f"Bearer {access_token}"  # ← Прямая передача
     }
     
     print(f"📤 [GEN] Sending request to GigaChat API...")
     print(f"📤 [GEN] URL: {CHAT_URL}")
-    print(f"📤 [GEN] Authorization: Bearer {token_preview}")  # ← ЛОГИРУЕМ
+    print(f"📤 [GEN] Authorization: Bearer {token_preview}")
     print(f"📤 [GEN] Model: GigaChat")
     
     connector = aiohttp.TCPConnector(ssl=False)
@@ -176,6 +73,12 @@ async def generate_question(subject: str) -> str:
                     print(f"✅ [GEN] Success! Result length: {len(result)}")
                     print(f"{'=' * 70}")
                     return result
+                    
+                elif resp.status == 401:
+                    print(f"❌ [GEN] 401 Unauthorized - Token expired or invalid!")
+                    print(f"❌ [GEN] Get new token from SberCloud and update GIGACHAT_ACCESS_TOKEN")
+                    return "❌ Ошибка авторизации (401). Access Token истёк или неверный. Обновите токен в SberCloud."
+                    
                 else:
                     print(f"❌ [GEN] API Error {resp.status}: {response_text[:200]}")
                     print(f"{'=' * 70}")
@@ -189,22 +92,17 @@ async def generate_question(subject: str) -> str:
         await connector.close()
 
 async def evaluate_answer(question: str, user_answer: str, subject: str) -> str:
-    """Оценка ответа с ЯВНОЙ передачей токена"""
+    """Оценка ответа с ПРЯМОЙ передачей Access Token"""
     start_time = time.time()
     print(f"\n{'=' * 70}")
     print(f"🚀 [EVAL] Starting evaluation: subject={subject}, answer_len={len(user_answer)}")
     print(f"{'=' * 70}")
     
-    # === ЯВНОЕ ПОЛУЧЕНИЕ ТОКЕНА ===
-    print("🔑 [EVAL] Requesting access token...")
-    try:
-        access_token = await get_gigachat_token()
-        token_preview = f"{access_token[:20]}...{access_token[-10:]}"
-        print(f"✅ [EVAL] Access token received: {token_preview}")
-    except Exception as e:
-        error_msg = f"❌ Ошибка авторизации: {e}"
-        print(error_msg)
-        return error_msg
+    # === Access Token из config (без OAuth) ===
+    access_token = config.GIGACHAT_ACCESS_TOKEN
+    token_preview = f"{access_token[:20]}...{access_token[-10:]}"
+    print(f"🔑 [EVAL] Using Access Token: {token_preview}")
+    print(f"🔑 [EVAL] Token length: {len(access_token)} chars")
     
     system_prompt = (
         "⚠️ КРИТИЧЕСКИ ВАЖНО: Ты выводишь оценку ТОЛЬКО в формате 'Оценка: X/5'.\n"
@@ -239,12 +137,12 @@ async def evaluate_answer(question: str, user_answer: str, subject: str) -> str:
     headers = {
         "Content-Type": "application/json",
         "Accept": "application/json",
-        "Authorization": f"Bearer {access_token}"  # ← ЯВНАЯ ПЕРЕДАЧА
+        "Authorization": f"Bearer {access_token}"  # ← Прямая передача
     }
     
     print(f"📤 [EVAL] Sending evaluation request...")
     print(f"📤 [EVAL] URL: {CHAT_URL}")
-    print(f"📤 [EVAL] Authorization: Bearer {token_preview}")  # ← ЛОГИРУЕМ
+    print(f"📤 [EVAL] Authorization: Bearer {token_preview}")
     print(f"📤 [EVAL] Model: GigaChat")
     
     connector = aiohttp.TCPConnector(ssl=False)
@@ -265,7 +163,7 @@ async def evaluate_answer(question: str, user_answer: str, subject: str) -> str:
                     
                     result = data["choices"][0]["message"]["content"].strip()
                     
-                    # Пост-обработка
+                    # Пост-обработка: убираем 100-балльную шкалу
                     patterns_to_remove = [
                         r'Оценка:\s*\d+/100',
                         r'\d+\s*баллов?\s*из\s*100',
@@ -284,6 +182,7 @@ async def evaluate_answer(question: str, user_answer: str, subject: str) -> str:
                         else: return "Оценка: 5/5"
                     result = re.sub(r'Оценка:\s*(\d+)/100', keep_only_5point, result)
                     
+                    # Удаляем пустой раздел "Что верно"
                     if "✅ Что верно:" in result:
                         start = result.find("✅ Что верно:")
                         end = result.find("❌ Что не верно:")
@@ -299,6 +198,12 @@ async def evaluate_answer(question: str, user_answer: str, subject: str) -> str:
                     print(f"✅ [EVAL] Success! Cleaned result length: {len(result)}")
                     print(f"{'=' * 70}")
                     return result
+                    
+                elif resp.status == 401:
+                    print(f"❌ [EVAL] 401 Unauthorized - Token expired or invalid!")
+                    print(f"❌ [EVAL] Get new token from SberCloud and update GIGACHAT_ACCESS_TOKEN")
+                    return "❌ Ошибка авторизации (401). Access Token истёк или неверный. Обновите токен в SberCloud."
+                    
                 else:
                     print(f"❌ [EVAL] API Error {resp.status}: {response_text[:200]}")
                     print(f"{'=' * 70}")

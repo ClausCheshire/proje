@@ -41,7 +41,7 @@ async def get_gigachat_token():
     }
     
     # Пробуем scope по очереди (PERS сначала, потом обычный)
-    scopes_to_try = ["GIGACHAT_API_PERS", "GIGACHAT_API"]
+    scopes_to_try = ["GIGACHAT_API_PERS"]
     
     connector = aiohttp.TCPConnector(ssl=False)
     
@@ -283,3 +283,4 @@ async def evaluate_answer(question: str, user_answer: str, subject: str) -> str:
         return f"❌ Ошибка: {type(e).__name__}: {str(e)}"
     finally:
         await connector.close()
+

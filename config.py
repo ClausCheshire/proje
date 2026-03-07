@@ -5,14 +5,11 @@ from dotenv import load_dotenv
 load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-GIGACHAT_CLIENT_ID = os.getenv("GIGACHAT_CLIENT_ID")
-GIGACHAT_CLIENT_SECRET = os.getenv("GIGACHAT_CLIENT_SECRET")
+GIGACHAT_ACCESS_TOKEN = os.getenv("GIGACHAT_ACCESS_TOKEN")
 
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN not found in .env")
-if not GIGACHAT_CLIENT_ID:
-    raise ValueError("GIGACHAT_CLIENT_ID not found in .env")
-if not GIGACHAT_CLIENT_SECRET:
-    raise ValueError("GIGACHAT_CLIENT_SECRET not found in .env")
+if not GIGACHAT_ACCESS_TOKEN:
+    raise ValueError("GIGACHAT_ACCESS_TOKEN not found in .env")
 
-print(f"✅ Config loaded: BOT_TOKEN={len(BOT_TOKEN)} chars, CLIENT_ID={GIGACHAT_CLIENT_ID[:10]}...")
+print(f"✅ Config loaded: BOT_TOKEN={len(BOT_TOKEN)} chars, ACCESS_TOKEN={len(GIGACHAT_ACCESS_TOKEN)} chars")

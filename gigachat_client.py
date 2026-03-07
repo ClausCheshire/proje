@@ -25,6 +25,11 @@ _token_cache = {
 
 # ... затем обновите функцию get_gigachat_token:
 
+# В начало файла добавьте импорт:
+import uuid
+
+# ... затем обновите функцию get_gigachat_token:
+
 async def get_gigachat_token():
     """Получение токена через OAuth (Client ID + Client Secret)"""
     current_time = time.time()
@@ -290,5 +295,6 @@ async def evaluate_answer(question: str, user_answer: str, subject: str) -> str:
         return f"❌ Ошибка: {type(e).__name__}: {str(e)}"
     finally:
         await connector.close()
+
 
 

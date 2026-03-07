@@ -53,12 +53,13 @@ async def get_gigachat_token():
         "Content-Type": "application/x-www-form-urlencoded",
         "Accept": "application/json",
         "Authorization": f"Basic {encoded_credentials}"
+                "RqUID": rq_uid
     }
     
     # Добавляем RqUID в данные запроса + нужный scope
     data = {
         "scope": "GIGACHAT_API_PERS",
-        "RqUID": rq_uid
+
     }
     
     connector = aiohttp.TCPConnector(ssl=False)
@@ -295,6 +296,7 @@ async def evaluate_answer(question: str, user_answer: str, subject: str) -> str:
         return f"❌ Ошибка: {type(e).__name__}: {str(e)}"
     finally:
         await connector.close()
+
 
 
 

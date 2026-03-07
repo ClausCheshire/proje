@@ -29,31 +29,36 @@ async def get_gigachat_token():
         return _token_cache["token"]
     
     print("🔑 [AUTH] Requesting new token from SberCloud...")
-    
-    # Формируем Basic Auth
-    credentials = f"{config.GIGACHAT_CLIENT_ID}:{config.GIGACHAT_CLIENT_SECRET}"
-    encoded_credentials = base64.b64encode(credentials.encode('utf-8')).decode('utf-8')
-    
-    headers = {
-        "Content-Type": "application/x-www-form-urlencoded",
-        "Accept": "application/json",
-        "Authorization": f"Basic {encoded_credentials}"
-    }
+    print(f"🔑 [AUTH] Client ID: {config.GIGACHAT_CLIENT_ID[:10]}...")
+    print(f"🔑 [AUTH] Client Secret length: {len(config.GIGACHAT_CLIENT_SECRET)}")
     
     # Пробуем scope по очереди (PERS сначала, потом обычный)
-    scopes_to_try = ["GIGACHAT_API_PERS"]
-    
-    connector = aiohttp.TCPConnector(ssl=False)
+    scopes_to_try = ["GIGACHAT_API_PERS", "GIGACHAT_API"]
     
     for scope in scopes_to_try:
-        # === ВАЖНО: ТОЛЬКО scope, БЕЗ RqUID ===
+        print(f"🔑 [AUTH] Trying scope: {scope}")
+        
+        # Формируем Basic Auth
+        credentials = f"{config.GIGACHAT_CLIENT_ID}:{config.GIGACHAT_CLIENT_SECRET}"
+        encoded_credentials = base64.b64encode(credentials.encode('utf-8')).decode('utf-8')
+        
+        headers = {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Accept": "application/json",
+            "Authorization": f"Basic {encoded_credentials}"
+        }
+        
+        # ТОЛЬКО scope, БЕЗ RqUID (RqUID нужен только для /chat/completions)
         data = {"scope": scope}
+        
+        connector = aiohttp.TCPConnector(ssl=False)
         
         try:
             async with aiohttp.ClientSession(connector=connector, timeout=AUTH_TIMEOUT) as session:
                 async with session.post(AUTH_URL, data=data, headers=headers) as resp:
                     response_text = await resp.text()
-                    print(f"📡 [AUTH] Trying scope '{scope}': Status={resp.status}")
+                    print(f"📡 [AUTH] Status: {resp.status}")
+                    print(f"📡 [AUTH] Response body: {response_text[:300]}")
                     
                     if resp.status == 200:
                         json_data = await resp.json()
@@ -64,19 +69,31 @@ async def get_gigachat_token():
                         _token_cache["token"] = access_token
                         _token_cache["expires_at"] = current_time + expires_in - 300
                         
-                        print(f"✅ [AUTH] Token received with scope '{scope}', cached for {expires_in - 300}s")
+                        print(f"✅ [AUTH] Token received with scope '{scope}'")
+                        print(f"✅ [AUTH] Token expires in: {expires_in - 300}s")
+                        print(f"✅ [AUTH] Token starts with: {access_token[:20]}...")
                         return access_token
                     else:
-                        print(f"❌ [AUTH] Failed with scope '{scope}': {resp.status} - Body: '{response_text[:200]}'")
+                        print(f"❌ [AUTH] Failed with scope '{scope}': {resp.status}")
+                        print(f"❌ [AUTH] Error details: {response_text[:200]}")
                         
         except asyncio.TimeoutError:
             print(f"⏰ [AUTH] Timeout with scope '{scope}'")
-            continue
         except Exception as e:
-            print(f"⚠️ [AUTH] Error with scope '{scope}': {type(e).__name__}: {e}")
-            continue
+            print(f"⚠️ [AUTH] Error with scope '{scope}': {type(e).__name__}: {str(e)}")
         finally:
             await connector.close()
+    
+    # Если оба scope не сработали
+    print("❌ [AUTH] GigaChat auth failed with all scopes")
+    print("💡 [AUTH] Check: 1) OAuth Client in IAM → Applications, 2) Role gigachat.ai.user assigned")
+    raise Exception(
+        "GigaChat auth failed with all scopes. Check credentials in SberCloud.\n"
+        "1. Make sure you're using OAuth Client (not API Key)\n"
+        "2. Check IAM → Applications → Your App → OAuth Client\n"
+        "3. Make sure role 'gigachat.ai.user' is assigned\n"
+        "4. Check for spaces/quotes in Railway Variables"
+    )
     
     # Если оба scope не сработали
     raise Exception("GigaChat auth failed with all scopes. Check credentials in SberCloud.")
@@ -283,4 +300,5 @@ async def evaluate_answer(question: str, user_answer: str, subject: str) -> str:
         return f"❌ Ошибка: {type(e).__name__}: {str(e)}"
     finally:
         await connector.close()
+
 

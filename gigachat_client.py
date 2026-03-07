@@ -19,14 +19,11 @@ _token_cache = {
     "expires_at": 0
 }
 
-# ============================================================================
-# ФУНКЦИЯ 1: Получение токена
-# ============================================================================
 async def get_gigachat_token():
     """Получение токена через OAuth (Client ID + Client Secret)"""
     current_time = time.time()
     
-    # Проверяем кэш — если токен ещё валиден, возвращаем его
+    # Проверяем кэш
     if _token_cache["token"] and current_time < _token_cache["expires_at"]:
         print(f"✅ [AUTH] Using cached token (expires in {_token_cache['expires_at'] - current_time:.0f}s)")
         return _token_cache["token"]
@@ -38,7 +35,7 @@ async def get_gigachat_token():
     print(f"🔑 [AUTH] Client Secret length: {len(config.GIGACHAT_CLIENT_SECRET)}")
     print("=" * 60)
     
-    # Пробуем scope по очереди
+    # Пробуем scope по очереди — код сам найдёт рабочий
     scopes_to_try = ["GIGACHAT_API_PERS", "GIGACHAT_API"]
     
     for scope in scopes_to_try:
@@ -78,6 +75,7 @@ async def get_gigachat_token():
                             _token_cache["expires_at"] = current_time + expires_in - 300
                             
                             print(f"✅ [AUTH] Token received with scope '{scope}'")
+                            print(f"✅ [AUTH] Token expires in: {expires_in - 300}s")
                             print("=" * 60)
                             return access_token
                         except Exception as json_err:
@@ -85,26 +83,32 @@ async def get_gigachat_token():
                             raise Exception(f"Invalid JSON response: {json_err}")
                     else:
                         print(f"❌ [AUTH] Failed with scope '{scope}': HTTP {resp.status}")
-                        if scope == scopes_to_try[-1]:
-                            print("=" * 60)
-                            raise Exception(f"GigaChat auth failed: HTTP {resp.status} - {response_text[:300]}")
+                        # Не выбрасываем ошибку сразу — пробуем следующий scope
                         
         except asyncio.TimeoutError:
             print(f"⏰ [AUTH] Timeout with scope '{scope}'")
-            if scope == scopes_to_try[-1]:
-                raise Exception("GigaChat auth timeout")
         except Exception as e:
             print(f"⚠️ [AUTH] Error with scope '{scope}': {type(e).__name__}: {str(e)}")
-            if scope == scopes_to_try[-1]:
-                raise
         finally:
             await connector.close()
     
-    raise Exception("GigaChat auth failed with all scopes")
+    # Если оба scope не сработали
+    print("=" * 60)
+    print("❌ [AUTH] GigaChat auth failed with all scopes")
+    print("=" * 60)
+    print("💡 [AUTH] Troubleshooting:")
+    print("  1. Check IAM → Applications → OAuth Client (not API Key)")
+    print("  2. Check role 'gigachat.ai.user' is assigned")
+    print("  3. Check for spaces/quotes in Railway Variables")
+    print("  4. Run curl test from documentation")
+    print("=" * 60)
+    raise Exception(
+        "GigaChat auth failed with all scopes. Check credentials in SberCloud.\n"
+        "1. Make sure you're using OAuth Client (IAM → Applications)\n"
+        "2. Check role 'gigachat.ai.user' is assigned\n"
+        "3. Check for spaces/quotes in Railway Variables"
+    )
 
-# ============================================================================
-# ФУНКЦИЯ 2: Генерация вопроса
-# ============================================================================
 async def generate_question(subject: str) -> str:
     """Генерация вопроса для подготовки к олимпиадам по обществознанию"""
     start_time = time.time()
@@ -170,9 +174,6 @@ async def generate_question(subject: str) -> str:
     finally:
         await connector.close()
 
-# ============================================================================
-# ФУНКЦИЯ 3: Оценка ответа
-# ============================================================================
 async def evaluate_answer(question: str, user_answer: str, subject: str) -> str:
     """Оценка ответа ученика от 1 до 5 баллов"""
     start_time = time.time()

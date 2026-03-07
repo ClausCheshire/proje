@@ -14,3 +14,5 @@ if not GIGACHAT_CLIENT_ID:
     raise ValueError("GIGACHAT_CLIENT_ID not found in .env")
 if not GIGACHAT_CLIENT_SECRET:
     raise ValueError("GIGACHAT_CLIENT_SECRET not found in .env")
+
+print(f"✅ Config loaded: BOT_TOKEN={len(BOT_TOKEN)} chars, CLIENT_ID={GIGACHAT_CLIENT_ID[:10]}...")

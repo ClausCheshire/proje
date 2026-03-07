@@ -5,6 +5,7 @@ import asyncio
 import re
 import time
 import base64
+import uuid
 
 AUTH_URL = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
 CHAT_URL = "https://gigachat.devices.sberbank.ru/api/v1/chat/completions"
@@ -19,16 +20,25 @@ _token_cache = {
     "expires_at": 0
 }
 
+# В начало файла добавьте импорт:
+
+
+# ... затем обновите функцию get_gigachat_token:
+
 async def get_gigachat_token():
     """Получение токена через OAuth (Client ID + Client Secret)"""
     current_time = time.time()
     
-    # Проверяем кэш
+    # Проверяем кэш — если токен ещё валиден, возвращаем его
     if _token_cache["token"] and current_time < _token_cache["expires_at"]:
-        print(f"✅ [AUTH] Using cached token")
+        print(f"✅ [AUTH] Using cached token (expires in {_token_cache['expires_at'] - current_time:.0f}s)")
         return _token_cache["token"]
     
     print("🔑 [AUTH] Requesting new token from SberCloud...")
+    
+    # Генерируем уникальный RqUID для этого запроса
+    rq_uid = str(uuid.uuid4())
+    print(f"🆔 [AUTH] RqUID: {rq_uid}")
     
     # Формируем Basic Auth
     credentials = f"{config.GIGACHAT_CLIENT_ID}:{config.GIGACHAT_CLIENT_SECRET}"
@@ -40,9 +50,11 @@ async def get_gigachat_token():
         "Authorization": f"Basic {encoded_credentials}"
     }
     
-    # === ВОТ ЭТА СТРОКА ОТВЕЧАЕТ ЗА SCOPE ===
-    data = {"scope": "GIGACHAT_API_PERS"}
-    # ========================================
+    # Добавляем RqUID в данные запроса + нужный scope
+    data = {
+        "scope": "GIGACHAT_API_PERS",
+        "RqUID": rq_uid
+    }
     
     connector = aiohttp.TCPConnector(ssl=False)
     
@@ -50,19 +62,29 @@ async def get_gigachat_token():
         async with aiohttp.ClientSession(connector=connector, timeout=AUTH_TIMEOUT) as session:
             async with session.post(AUTH_URL, data=data, headers=headers) as resp:
                 response_text = await resp.text()
+                print(f"📡 [AUTH] Status: {resp.status}")
                 
                 if resp.status == 200:
                     json_data = await resp.json()
                     access_token = json_data["access_token"]
-                    expires_in = json_data.get("expires_in", 1800)
+                    expires_in = json_data.get("expires_in", 1800)  # 30 минут по умолчанию
                     
+                    # Сохраняем в кэш (с запасом 5 минут)
                     _token_cache["token"] = access_token
                     _token_cache["expires_at"] = current_time + expires_in - 300
-                    print(f"✅ [AUTH] Token received with scope GIGACHAT_API_PERS")
+                    
+                    print(f"✅ [AUTH] Token received, cached for {expires_in - 300}s")
                     return access_token
                 else:
-                    print(f"❌ [AUTH] Failed: {resp.status}")
-                    raise Exception(f"Auth error: {resp.status}")
+                    print(f"❌ [AUTH] Failed: {resp.status} - {response_text[:200]}")
+                    raise Exception(f"GigaChat auth error: {resp.status} - {response_text[:200]}")
+                    
+    except asyncio.TimeoutError:
+        print("⏰ [AUTH] Timeout")
+        raise Exception("Превышено время ожидания при авторизации")
+    except Exception as e:
+        print(f"⚠️ [AUTH] Error: {type(e).__name__}: {e}")
+        raise
     finally:
         await connector.close()
 
@@ -268,4 +290,5 @@ async def evaluate_answer(question: str, user_answer: str, subject: str) -> str:
         return f"❌ Ошибка: {type(e).__name__}: {str(e)}"
     finally:
         await connector.close()
+
 

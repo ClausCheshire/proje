@@ -5,7 +5,6 @@ import asyncio
 import re
 import time
 import base64
-import uuid
 
 AUTH_URL = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
 CHAT_URL = "https://gigachat.devices.sberbank.ru/api/v1/chat/completions"
@@ -20,16 +19,6 @@ _token_cache = {
     "expires_at": 0
 }
 
-# В начало файла добавьте импорт:
-
-
-# ... затем обновите функцию get_gigachat_token:
-
-# В начало файла добавьте импорт:
-import uuid
-
-# ... затем обновите функцию get_gigachat_token:
-
 async def get_gigachat_token():
     """Получение токена через OAuth (Client ID + Client Secret)"""
     current_time = time.time()
@@ -41,10 +30,6 @@ async def get_gigachat_token():
     
     print("🔑 [AUTH] Requesting new token from SberCloud...")
     
-    # Генерируем уникальный RqUID для этого запроса
-    rq_uid = str(uuid.uuid4())
-    print(f"🆔 [AUTH] RqUID: {rq_uid}")
-    
     # Формируем Basic Auth
     credentials = f"{config.GIGACHAT_CLIENT_ID}:{config.GIGACHAT_CLIENT_SECRET}"
     encoded_credentials = base64.b64encode(credentials.encode('utf-8')).decode('utf-8')
@@ -53,46 +38,48 @@ async def get_gigachat_token():
         "Content-Type": "application/x-www-form-urlencoded",
         "Accept": "application/json",
         "Authorization": f"Basic {encoded_credentials}"
-                "RqUID": rq_uid
     }
     
-    # Добавляем RqUID в данные запроса + нужный scope
-    data = {
-        "scope": "GIGACHAT_API_PERS",
-
-    }
+    # Пробуем scope по очереди (PERS сначала, потом обычный)
+    scopes_to_try = ["GIGACHAT_API_PERS", "GIGACHAT_API"]
     
     connector = aiohttp.TCPConnector(ssl=False)
     
-    try:
-        async with aiohttp.ClientSession(connector=connector, timeout=AUTH_TIMEOUT) as session:
-            async with session.post(AUTH_URL, data=data, headers=headers) as resp:
-                response_text = await resp.text()
-                print(f"📡 [AUTH] Status: {resp.status}")
-                
-                if resp.status == 200:
-                    json_data = await resp.json()
-                    access_token = json_data["access_token"]
-                    expires_in = json_data.get("expires_in", 1800)  # 30 минут по умолчанию
+    for scope in scopes_to_try:
+        # === ВАЖНО: ТОЛЬКО scope, БЕЗ RqUID ===
+        data = {"scope": scope}
+        
+        try:
+            async with aiohttp.ClientSession(connector=connector, timeout=AUTH_TIMEOUT) as session:
+                async with session.post(AUTH_URL, data=data, headers=headers) as resp:
+                    response_text = await resp.text()
+                    print(f"📡 [AUTH] Trying scope '{scope}': Status={resp.status}")
                     
-                    # Сохраняем в кэш (с запасом 5 минут)
-                    _token_cache["token"] = access_token
-                    _token_cache["expires_at"] = current_time + expires_in - 300
-                    
-                    print(f"✅ [AUTH] Token received, cached for {expires_in - 300}s")
-                    return access_token
-                else:
-                    print(f"❌ [AUTH] Failed: {resp.status} - {response_text[:200]}")
-                    raise Exception(f"GigaChat auth error: {resp.status} - {response_text[:200]}")
-                    
-    except asyncio.TimeoutError:
-        print("⏰ [AUTH] Timeout")
-        raise Exception("Превышено время ожидания при авторизации")
-    except Exception as e:
-        print(f"⚠️ [AUTH] Error: {type(e).__name__}: {e}")
-        raise
-    finally:
-        await connector.close()
+                    if resp.status == 200:
+                        json_data = await resp.json()
+                        access_token = json_data["access_token"]
+                        expires_in = json_data.get("expires_in", 1800)
+                        
+                        # Сохраняем в кэш (с запасом 5 минут)
+                        _token_cache["token"] = access_token
+                        _token_cache["expires_at"] = current_time + expires_in - 300
+                        
+                        print(f"✅ [AUTH] Token received with scope '{scope}', cached for {expires_in - 300}s")
+                        return access_token
+                    else:
+                        print(f"❌ [AUTH] Failed with scope '{scope}': {resp.status} - Body: '{response_text[:200]}'")
+                        
+        except asyncio.TimeoutError:
+            print(f"⏰ [AUTH] Timeout with scope '{scope}'")
+            continue
+        except Exception as e:
+            print(f"⚠️ [AUTH] Error with scope '{scope}': {type(e).__name__}: {e}")
+            continue
+        finally:
+            await connector.close()
+    
+    # Если оба scope не сработали
+    raise Exception("GigaChat auth failed with all scopes. Check credentials in SberCloud.")
 
 async def generate_question(subject: str) -> str:
     """Генерация вопроса для подготовки к олимпиадам по обществознанию"""
@@ -296,7 +283,3 @@ async def evaluate_answer(question: str, user_answer: str, subject: str) -> str:
         return f"❌ Ошибка: {type(e).__name__}: {str(e)}"
     finally:
         await connector.close()
-
-
-
-
